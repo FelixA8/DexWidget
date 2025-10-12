@@ -14,3 +14,7 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+
+## Moralis API Key
+
+The Dex widget expects a Moralis API key at runtime. Copy `.moralis_api_key.example` to `.moralis_api_key`, replace the placeholder value with your key, and keep the file out of version control. Alternatively, pass the key when building with `--dart-define MORALIS_API_KEY=your-key`.
