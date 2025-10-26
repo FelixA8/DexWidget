@@ -1,22 +1,40 @@
 import 'package:dexwidget/dashboard/dashboardViewModel.dart';
+import 'package:dexwidget/dashboard/sections/tokenInformationSection/tokenInformationView.dart';
 import 'package:dexwidget/dashboard/sections/walletInformationSection/walletInformationView.dart';
-import 'package:dexwidget/models/ecrToken.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class DashboardView extends ConsumerWidget {
-  final List<ERC20Token> tokens;
+class DashboardView extends ConsumerStatefulWidget {
+  final String walletBalance;
   final String walletAddress;
 
   const DashboardView({
     super.key,
-    required this.tokens,
+    required this.walletBalance,
     required this.walletAddress,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final params = (tokens: tokens, walletAddress: walletAddress);
+  ConsumerState<DashboardView> createState() => _DashboardViewState();
+}
+
+class _DashboardViewState extends ConsumerState<DashboardView> {
+  @override
+  void initState() {
+    super.initState();
+
+    // Initialize the view model with the passed data
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref
+          .read(dashboardViewModel.notifier)
+          .initializeWithData(walletAddress: widget.walletAddress);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(dashboardViewModel);
+    final vm = ref.read(dashboardViewModel.notifier);
 
     return Scaffold(
       appBar: AppBar(
@@ -33,18 +51,27 @@ class DashboardView extends ConsumerWidget {
           hoverColor: Colors.transparent,
         ),
       ),
-      body: content(ref, params),
-    );
-  }
-
-  Widget content(
-    WidgetRef ref,
-    ({List<ERC20Token> tokens, String walletAddress}) params,
-  ) {
-    final state = ref.watch(dashboardViewModel);
-
-    return Scrollbar(
-      child: Column(children: [WalletInformationView(walletId: state.walletAddress, walletBalance: state.walletBalance,)]),
+      body: Scrollbar(
+        child: ListView.separated(
+          physics: const ClampingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          itemCount: 2,
+          separatorBuilder: (_, __) => const SizedBox(height: 16),
+          itemBuilder: (_, index) {
+            switch (index) {
+              case 0:
+                return WalletInformationView(
+                  walletId: state.walletAddress,
+                  walletBalance: state.walletData.totalNetworthUsd,
+                );
+              case 1:
+                return TokenInformationView(tokens: state.tokens);
+              default:
+                return null;
+            }
+          },
+        ),
+      ),
     );
   }
 }

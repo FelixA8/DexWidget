@@ -21,8 +21,8 @@ class DexInputView extends ConsumerWidget {
   }
 
   Widget content(WidgetRef ref) {
-    final state = ref.watch(dexInputViewModel);
-    final vm = ref.read(dexInputViewModel.notifier);
+    final state = ref.watch(dexLoginViewModel);
+    final vm = ref.read(dexLoginViewModel.notifier);
 
     return Center(
       child: Column(
