@@ -1,0 +1,269 @@
+name: Auto Generate PR Description and Notify Teams
+
+on:
+  pull_request:
+    types: [opened]
+
+jobs:
+  auto-pr-description:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract ticket ID from branch name
+        id: extract_ticket
+        run: |
+          BRANCH_NAME="${{ github.head_ref }}"
+          echo "Branch name: $BRANCH_NAME"
+          
+          # Extract ticket ID (supports formats like: ticket-123, PROJ-456, feature/PROJ-789)
+          TICKET_ID=$(echo "$BRANCH_NAME" | grep -oP '([A-Z]+-\d+|ticket-\d+)' | head -n 1)
+          
+          if [ -z "$TICKET_ID" ]; then
+            echo "No ticket ID found in branch name"
+            echo "ticket_found=false" >> $GITHUB_OUTPUT
+            echo "ticket_id=N/A" >> $GITHUB_OUTPUT
+          else
+            echo "Ticket ID: $TICKET_ID"
+            echo "ticket_id=$TICKET_ID" >> $GITHUB_OUTPUT
+            echo "ticket_found=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch Jira ticket details
+        if: steps.extract_ticket.outputs.ticket_found == 'true'
+        id: jira_details
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+        run: |
+          TICKET_ID="${{ steps.extract_ticket.outputs.ticket_id }}"
+          
+          # Mask sensitive data
+          echo "::add-mask::$JIRA_EMAIL"
+          echo "::add-mask::$JIRA_API_TOKEN"
+          
+          # Fetch ticket from Jira REST API
+          RESPONSE=$(curl -s -X GET \
+            -H "Authorization: Basic $(echo -n "$JIRA_EMAIL:$JIRA_API_TOKEN" | base64)" \
+            -H "Content-Type: application/json" \
+            "$JIRA_BASE_URL/rest/api/3/issue/$TICKET_ID")
+          
+          # Check if Jira ticket was found
+          ERROR_MSG=$(echo "$RESPONSE" | jq -r '.errorMessages[0] // empty')
+          
+          if [ ! -z "$ERROR_MSG" ]; then
+            echo "Jira ticket not found or error occurred"
+            echo "jira_found=false" >> $GITHUB_OUTPUT
+            echo "title=Ticket Title" >> $GITHUB_OUTPUT
+            echo "description=No description available" >> $GITHUB_OUTPUT
+            echo "status=N/A" >> $GITHUB_OUTPUT
+            echo "assignee=Unassigned" >> $GITHUB_OUTPUT
+            echo "issue_type=N/A" >> $GITHUB_OUTPUT
+          else
+            echo "jira_found=true" >> $GITHUB_OUTPUT
+            
+            # Extract relevant fields
+            TITLE=$(echo "$RESPONSE" | jq -r '.fields.summary // "Ticket Title"')
+            DESCRIPTION=$(echo "$RESPONSE" | jq -r '.fields.description.content[0].content[0].text // "No description available"' 2>/dev/null || echo "No description available")
+            STATUS=$(echo "$RESPONSE" | jq -r '.fields.status.name // "N/A"')
+            ASSIGNEE=$(echo "$RESPONSE" | jq -r '.fields.assignee.displayName // "Unassigned"')
+            ISSUE_TYPE=$(echo "$RESPONSE" | jq -r '.fields.issuetype.name // "N/A"')
+            
+            # Save to output (escape for multiline)
+            echo "title<<EOF" >> $GITHUB_OUTPUT
+            echo "$TITLE" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            
+            echo "description<<EOF" >> $GITHUB_OUTPUT
+            echo "$DESCRIPTION" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            
+            echo "status=$STATUS" >> $GITHUB_OUTPUT
+            echo "assignee=$ASSIGNEE" >> $GITHUB_OUTPUT
+            echo "issue_type=$ISSUE_TYPE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set default values if ticket not found
+        if: steps.extract_ticket.outputs.ticket_found == 'false'
+        id: default_values
+        run: |
+          echo "title=Ticket Title" >> $GITHUB_OUTPUT
+          echo "description=No description available" >> $GITHUB_OUTPUT
+          echo "status=N/A" >> $GITHUB_OUTPUT
+          echo "assignee=Unassigned" >> $GITHUB_OUTPUT
+          echo "issue_type=N/A" >> $GITHUB_OUTPUT
+          echo "jira_found=false" >> $GITHUB_OUTPUT
+
+      - name: Generate PR description with Claude AI
+        if: always()
+        id: generate_description
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Mask sensitive data
+          echo "::add-mask::$ANTHROPIC_API_KEY"
+          
+          TICKET_ID="${{ steps.extract_ticket.outputs.ticket_id }}"
+          
+          # Use appropriate values based on whether ticket was found
+          if [ "${{ steps.extract_ticket.outputs.ticket_found }}" == "true" ]; then
+            JIRA_TITLE="${{ steps.jira_details.outputs.title }}"
+            JIRA_DESC="${{ steps.jira_details.outputs.description }}"
+            JIRA_TYPE="${{ steps.jira_details.outputs.issue_type }}"
+          else
+            JIRA_TITLE="${{ steps.default_values.outputs.title }}"
+            JIRA_DESC="${{ steps.default_values.outputs.description }}"
+            JIRA_TYPE="${{ steps.default_values.outputs.issue_type }}"
+          fi
+          
+          # Get PR diff summary
+          git fetch origin ${{ github.base_ref }}
+          FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | wc -l)
+          
+          # Create prompt for Claude
+          PROMPT=$(cat <<EOF
+          Generate a professional Pull Request title and description based on this information:
+          
+          Jira Ticket: $TICKET_ID
+          Title: $JIRA_TITLE
+          Type: $JIRA_TYPE
+          Description: $JIRA_DESC
+          Files Changed: $FILES_CHANGED
+          
+          IMPORTANT: Summarize the ticket title and description into ONE concise paragraph that explains what this PR does.
+          
+          Format the response as:
+          TITLE: [concise PR title including ticket ID if available, or use branch name]
+          
+          DESCRIPTION:
+          [One paragraph summarizing the changes based on ticket title and description]
+          
+          **Testing:**
+          - How to test these changes
+          
+          **Related:**
+          - Jira: $TICKET_ID (if available)
+          EOF
+          )
+          
+          # Call Claude API
+          RESPONSE=$(curl -s -X POST https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "{
+              \"model\": \"claude-sonnet-4-20250514\",
+              \"max_tokens\": 2000,
+              \"messages\": [{
+                \"role\": \"user\",
+                \"content\": $(echo "$PROMPT" | jq -Rs .)
+              }]
+            }")
+          
+          # Extract content
+          CONTENT=$(echo "$RESPONSE" | jq -r '.content[0].text')
+          
+          # Parse title and description
+          PR_TITLE=$(echo "$CONTENT" | grep "^TITLE:" | sed 's/^TITLE: //')
+          PR_DESC=$(echo "$CONTENT" | sed -n '/^DESCRIPTION:/,$p' | sed '1d')
+          
+          # Save to output
+          echo "pr_title<<EOF" >> $GITHUB_OUTPUT
+          echo "$PR_TITLE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
+          echo "pr_description<<EOF" >> $GITHUB_OUTPUT
+          echo "$PR_DESC" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update PR title and description
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prTitle = `${{ steps.generate_description.outputs.pr_title }}`;
+            const prDescription = `${{ steps.generate_description.outputs.pr_description }}`;
+            
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              title: prTitle,
+              body: prDescription
+            });
+
+      - name: Notify Microsoft Teams
+        if: always()
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: |
+          # Mask sensitive data
+          echo "::add-mask::$TEAMS_WEBHOOK_URL"
+          
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          PR_TITLE="${{ steps.generate_description.outputs.pr_title || github.event.pull_request.title }}"
+          TICKET_ID="${{ steps.extract_ticket.outputs.ticket_id || 'No ticket' }}"
+          BRANCH="${{ github.head_ref }}"
+          
+          # Create Teams message card
+          MESSAGE=$(cat <<EOF
+          {
+            "@type": "MessageCard",
+            "@context": "https://schema.org/extensions",
+            "summary": "New PR: $PR_TITLE",
+            "themeColor": "0078D7",
+            "title": "🔀 New Pull Request Created",
+            "sections": [
+              {
+                "activityTitle": "**$PR_AUTHOR** created a pull request",
+                "activitySubtitle": "$(date -u +"%Y-%m-%d %H:%M UTC")",
+                "facts": [
+                  {
+                    "name": "Repository:",
+                    "value": "${{ github.repository }}"
+                  },
+                  {
+                    "name": "Branch:",
+                    "value": "$BRANCH"
+                  },
+                  {
+                    "name": "Ticket:",
+                    "value": "$TICKET_ID"
+                  },
+                  {
+                    "name": "Title:",
+                    "value": "$PR_TITLE"
+                  }
+                ],
+                "markdown": true
+              }
+            ],
+            "potentialAction": [
+              {
+                "@type": "OpenUri",
+                "name": "View Pull Request",
+                "targets": [
+                  {
+                    "os": "default",
+                    "uri": "$PR_URL"
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+          )
+          
+          # Send to Teams webhook
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d "$MESSAGE" \
+            "$TEAMS_WEBHOOK_URL"
