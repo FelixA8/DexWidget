@@ -14,7 +14,7 @@ jobs:
 
       - name: Generate PR title and description
         env:
-          GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
+          GITHUB_TOKEN: "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"
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BRANCH_NAME: ${{ github.head_ref }}
         run: |
