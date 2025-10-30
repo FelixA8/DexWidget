@@ -9,25 +9,36 @@ class DashboardViewState {
   final WalletNetWorth walletData;
   final List<ERC20Token> tokens;
   final String walletAddress;
+  final bool isLoadingWallet;
+  final bool isLoadingTokens;
 
   const DashboardViewState({
     this.tokens = const [],
     WalletNetWorth? walletData,
     this.walletAddress = '',
+    this.isLoadingWallet = false,
+    this.isLoadingTokens = false,
   }) : walletData = walletData ?? const WalletNetWorth(
           totalNetworthUsd: "0",
           chains: [],
         );
 
+  bool get isLoading => isLoadingWallet || isLoadingTokens;
+  bool get hasData => walletData.totalNetworthUsd != "0" && tokens.isNotEmpty;
+
   DashboardViewState copyWith({
     WalletNetWorth? walletData,
     List<ERC20Token>? tokens,
     String? walletAddress,
+    bool? isLoadingWallet,
+    bool? isLoadingTokens,
   }) {
     return DashboardViewState(
-      walletData: walletData,
+      walletData: walletData ?? this.walletData,
       tokens: tokens ?? this.tokens,
       walletAddress: walletAddress ?? this.walletAddress,
+      isLoadingWallet: isLoadingWallet ?? this.isLoadingWallet,
+      isLoadingTokens: isLoadingTokens ?? this.isLoadingTokens,
     );
   }
 }
@@ -48,31 +59,53 @@ class DashboardViewModel extends Notifier<DashboardViewState> {
       walletAddress: walletAddress,
     );
 
-    getWalletBalance();
-    getTokens();
+    // Load data sequentially to prevent race conditions and flickering
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    // Load wallet balance first
+    await getWalletBalance();
+    // Then load tokens
+    await getTokens();
   }
 
   Future<void> getWalletBalance() async {
     if (state.walletAddress.isEmpty) return;
 
+    // Set loading state
+    state = state.copyWith(isLoadingWallet: true);
+
     try {
       final walletNetWorth = await service.fetchWalletBalance(
         state.walletAddress,
       );
-      state = state.copyWith(walletData: walletNetWorth);
+      state = state.copyWith(
+        walletData: walletNetWorth,
+        isLoadingWallet: false,
+      );
+      print(walletNetWorth);
     } catch (e) {
-      
+      print(e);
+      state = state.copyWith(isLoadingWallet: false);
     }
   }
 
   //Check if wallet exist or not by checking the wallet balance
   Future<void> getTokens() async {
+    // Set loading state
+    state = state.copyWith(isLoadingTokens: true);
+
     try {
       final tokens = await service.fetchERC20Tokens(state.walletAddress);
-      state = state.copyWith(tokens: tokens);
+      state = state.copyWith(
+        tokens: tokens,
+        isLoadingTokens: false,
+      );
       print(tokens);
     } catch (e) {
       print(e);
+      state = state.copyWith(isLoadingTokens: false);
       Get.snackbar(
         '',
         e.toString(),

@@ -63,6 +63,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                 return WalletInformationView(
                   walletId: state.walletAddress,
                   walletBalance: state.walletData.totalNetworthUsd,
+                  isLoading: state.isLoadingWallet,
                 );
               case 1:
                 return TokenInformationView(tokens: state.tokens);
