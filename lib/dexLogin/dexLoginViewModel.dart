@@ -3,6 +3,7 @@ import 'package:dexwidget/dashboard/dashboardView.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:get/route_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class DexInputState {
   const DexInputState({this.address = '', this.isLoading = false});
@@ -21,6 +22,8 @@ class DexInputState {
 }
 
 class DexLoginViewModel extends Notifier<DexInputState> {
+  static const walletAddressKey = 'wallet_address';
+
   @override
   DexInputState build() => const DexInputState();
 
@@ -46,9 +49,18 @@ class DexLoginViewModel extends Notifier<DexInputState> {
   //Check if wallet exist or not by checking the wallet balance
   Future<void> performDexLookup() async {
     try {
-      final walletNetWorth = await service.fetchWalletBalance(state.address);
+      final address = state.address.trim();
+      final walletNetWorth = await service.fetchWalletBalance(address);
 
-      Get.to(() => DashboardView(walletBalance: walletNetWorth.totalNetworthUsd, walletAddress: state.address));
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(walletAddressKey, address);
+
+      Get.to(
+        () => DashboardView(
+          walletBalance: walletNetWorth.totalNetworthUsd,
+          walletAddress: address,
+        ),
+      );
     } catch (e) {
       Get.snackbar(
         '',

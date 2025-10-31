@@ -45,9 +45,9 @@ class WalletInformationView extends StatelessWidget {
                   ? Container(
                     key: ValueKey('loading'),
                     height: 32,
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox.square(
+                      dimension: 18,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
@@ -70,8 +70,8 @@ class WalletInformationView extends StatelessWidget {
 
   String _formatWalletAddress(String address) {
     if (address.isEmpty) return "";
-    if (address.length <= 12) return address;
-    return "${address.substring(0, 6)}...${address.substring(address.length - 4)}";
+    
+    return address;
   }
 
   String _formatBalance(String balance) {
